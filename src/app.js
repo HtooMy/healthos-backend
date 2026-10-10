@@ -14,15 +14,7 @@ const app = express();
 
 app.use(
   cors({
-    origin: function originCheck(origin, callback) {
-      const allowedOrigins = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map((item) => item.trim()) : [];
-
-      if (!origin || allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error('CORS policy does not allow this origin.'));
-    },
+    origin: true,
     credentials: true,
   })
 );

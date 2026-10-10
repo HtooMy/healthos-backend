@@ -52,7 +52,67 @@ function calculateAttentionScore({ sleepHours, sleepQuality, activityMinutes, pe
   return clampScore(sleepComponent + qualityComponent + focusComponent + activityComponent);
 }
 
-function calculateCheckInScores(payload) {
+async function getGeminiScores(payload) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const requestBody = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: `Return JSON only with this exact schema: {"energyScore": number, "attentionScore": number}. Score both values from 0 to 100. Use only this daily wellness data: sleepHours=${payload.sleepHours}, sleepQuality=${payload.sleepQuality}, activityMinutes=${payload.activityMinutes}, perceivedEnergy=${payload.perceivedEnergy}, perceivedFocus=${payload.perceivedFocus}.`,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: 'application/json',
+    },
+  };
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Gemini request failed.');
+    }
+
+    const data = await response.json();
+    const responseText = data?.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') || '{}';
+    const parsed = JSON.parse(responseText);
+
+    return {
+      energyScore: clampScore(parsed.energyScore),
+      attentionScore: clampScore(parsed.attentionScore),
+    };
+  } catch (error) {
+    console.warn('Gemini scoring failed, falling back to local heuristic score.', error.message);
+    return null;
+  }
+}
+
+async function calculateCheckInScores(payload) {
+  const geminiScores = await getGeminiScores(payload);
+  if (geminiScores) {
+    return geminiScores;
+  }
+
   return {
     energyScore: calculateEnergyScore(payload),
     attentionScore: calculateAttentionScore(payload),

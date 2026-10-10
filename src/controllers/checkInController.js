@@ -51,7 +51,7 @@ const createCheckIn = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: validationError });
   }
 
-  const scores = calculateCheckInScores(payload);
+  const scores = await calculateCheckInScores(payload);
   const checkIn = await CheckIn.create({ ...payload, ...scores });
 
   return res.status(201).json(checkIn);
