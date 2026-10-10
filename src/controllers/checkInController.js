@@ -1,0 +1,70 @@
+const CheckIn = require('../models/CheckIn');
+const { calculateCheckInScores } = require('../services/scoreService');
+
+const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+function validateCheckInInput(payload) {
+  if (
+    Object.prototype.hasOwnProperty.call(payload, 'energyScore') ||
+    Object.prototype.hasOwnProperty.call(payload, 'attentionScore')
+  ) {
+    return 'Scores are calculated on the server and cannot be submitted by the client.';
+  }
+
+  if (!Number.isFinite(Number(payload.sleepHours)) || Number(payload.sleepHours) < 0 || Number(payload.sleepHours) > 24) {
+    return 'sleepHours must be a number between 0 and 24.';
+  }
+
+  const integerFields = [
+    { key: 'sleepQuality', min: 1, max: 5 },
+    { key: 'perceivedEnergy', min: 1, max: 5 },
+    { key: 'perceivedFocus', min: 1, max: 5 },
+  ];
+
+  for (const field of integerFields) {
+    const value = Number(payload[field.key]);
+    if (!Number.isInteger(value) || value < field.min || value > field.max) {
+      return `${field.key} must be an integer between ${field.min} and ${field.max}.`;
+    }
+  }
+
+  const activityMinutes = Number(payload.activityMinutes);
+  if (!Number.isInteger(activityMinutes) || activityMinutes < 0 || activityMinutes > 1440) {
+    return 'activityMinutes must be an integer between 0 and 1440.';
+  }
+
+  return null;
+}
+
+const createCheckIn = asyncHandler(async (req, res) => {
+  const payload = {
+    userId: req.userId,
+    sleepHours: req.body.sleepHours,
+    sleepQuality: req.body.sleepQuality,
+    activityMinutes: req.body.activityMinutes,
+    perceivedEnergy: req.body.perceivedEnergy,
+    perceivedFocus: req.body.perceivedFocus,
+  };
+
+  const validationError = validateCheckInInput(payload);
+  if (validationError) {
+    return res.status(400).json({ message: validationError });
+  }
+
+  const scores = calculateCheckInScores(payload);
+  const checkIn = await CheckIn.create({ ...payload, ...scores });
+
+  return res.status(201).json(checkIn);
+});
+
+const getLatestCheckIn = asyncHandler(async (req, res) => {
+  const checkIn = await CheckIn.findOne({ userId: req.userId }).sort({ createdAt: -1 }).lean();
+
+  if (!checkIn) {
+    return res.status(404).json({ message: 'No daily check-in found for this user yet.' });
+  }
+
+  return res.status(200).json(checkIn);
+});
+
+module.exports = { createCheckIn, getLatestCheckIn };
