@@ -52,7 +52,7 @@ async function getGeminiScores(payload) {
         role: 'user',
         parts: [
           {
-            text: `Return JSON only with this exact schema: {"energyScore": number, "attentionScore": number}. Use this user data only: sleepHours=${payload.sleepHours}, activityLevel=${payload.activityLevel || 'moderate'}, mood=${payload.mood || 'neutral'}. Do not do any local calculations. Simply score the user's likely energy and attention for the day from 0 to 100.`,
+            text: `Return JSON only with this exact schema: {"energyScore": number, "attentionScore": number}. Use this user data only: sleepHours=${payload.sleepHours}, sleepQuality=${payload.sleepQuality ?? 3}, activityLevel=${payload.activityLevel || 'moderate'}, currentEnergy=${payload.perceivedEnergy ?? 3}, currentFocus=${payload.perceivedFocus ?? 3}, mood=${payload.mood || 'neutral'}. Do not do any local calculations. Simply score the user's likely energy and attention for the day from 0 to 100.`,
           },
         ],
       },

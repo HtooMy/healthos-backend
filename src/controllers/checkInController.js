@@ -77,20 +77,44 @@ const createCheckIn = asyncHandler(async (req, res) => {
 });
 
 const createSmartCheckIn = asyncHandler(async (req, res) => {
-  const { sleepHours, activityLevel, mood } = req.body || {};
+  const payload = req.body || {};
+  const sleepHours = payload.sleepHours ?? payload.hoursSlept;
+  const activityLevel = payload.activityLevel || payload.activity || 'moderate';
+  const mood = payload.mood || payload.energyMood || 'neutral';
+  const sleepQuality = payload.sleepQuality ?? payload.sleepQualityRating ?? 3;
+  const perceivedEnergy = payload.perceivedEnergy ?? payload.currentEnergy ?? 3;
+  const perceivedFocus = payload.perceivedFocus ?? payload.currentFocus ?? 3;
 
   if (Number(sleepHours) < 0 || Number(sleepHours) > 24) {
     return res.status(400).json({ message: 'sleepHours must be a number between 0 and 24.' });
   }
 
-  if (!activityLevel || !mood) {
-    return res.status(400).json({ message: 'activityLevel and mood are required.' });
+  if (!activityLevel) {
+    return res.status(400).json({ message: 'activityLevel is required.' });
   }
 
   const smartPayload = {
-    ...mapSmartCheckInInput({ sleepHours, activityLevel, mood }),
     userId: req.userId,
+    sleepHours: Number(sleepHours),
+    sleepQuality: Number(sleepQuality),
+    activityMinutes: normalizeActivityLevel(activityLevel),
+    perceivedEnergy: Number(perceivedEnergy),
+    perceivedFocus: Number(perceivedFocus),
+    activityLevel,
+    mood,
   };
+
+  const validationError = validateCheckInInput({
+    sleepHours: smartPayload.sleepHours,
+    sleepQuality: smartPayload.sleepQuality,
+    activityMinutes: smartPayload.activityMinutes,
+    perceivedEnergy: smartPayload.perceivedEnergy,
+    perceivedFocus: smartPayload.perceivedFocus,
+  });
+
+  if (validationError) {
+    return res.status(400).json({ message: validationError });
+  }
 
   const scores = await calculateCheckInScores({
     sleepHours: smartPayload.sleepHours,
@@ -113,10 +137,13 @@ const createSmartCheckIn = asyncHandler(async (req, res) => {
   });
 
   return res.status(201).json({
-    message: 'Check-in analyzed successfully.',
+    message: 'Based on your latest check-in.',
     checkIn,
+    estimatedEnergy: scores.energyScore,
+    estimatedFocus: scores.attentionScore,
     energyScore: scores.energyScore,
     attentionScore: scores.attentionScore,
+    label: 'Based on your latest check-in.',
   });
 });
 
