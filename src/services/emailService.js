@@ -45,9 +45,7 @@ async function sendVerificationEmail({ email, name, code }) {
   const resend = new Resend(apiKey);
 
   const { data, error } = await resend.emails.send({
-    from:
-      process.env.EMAIL_FROM ||
-      'HealthOS <onboarding@resend.dev>',
+    from: process.env.EMAIL_FROM,
     to: [email.trim()],
     subject: 'Your HealthOS verification code',
 
