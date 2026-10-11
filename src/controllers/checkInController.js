@@ -1,5 +1,5 @@
 const CheckIn = require('../models/CheckIn');
-const { calculateCheckInScores } = require('../services/scoreService');
+const { calculateCheckInScores, normalizeActivityLevel, normalizeMoodScore } = require('../services/scoreService');
 
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -36,6 +36,25 @@ function validateCheckInInput(payload) {
   return null;
 }
 
+function mapSmartCheckInInput(reqBody) {
+  const sleepHours = Number(reqBody.sleepHours);
+  const activityLevel = reqBody.activityLevel || 'moderate';
+  const mood = reqBody.mood || 'neutral';
+
+  const activityMinutes = normalizeActivityLevel(activityLevel);
+
+  return {
+    userId: reqBody.userId,
+    sleepHours,
+    sleepQuality: reqBody.sleepQuality ?? 3,
+    activityMinutes,
+    perceivedEnergy: reqBody.perceivedEnergy ?? 3,
+    perceivedFocus: reqBody.perceivedFocus ?? 3,
+    activityLevel,
+    mood,
+  };
+}
+
 const createCheckIn = asyncHandler(async (req, res) => {
   const payload = {
     userId: req.userId,
@@ -57,6 +76,50 @@ const createCheckIn = asyncHandler(async (req, res) => {
   return res.status(201).json(checkIn);
 });
 
+const createSmartCheckIn = asyncHandler(async (req, res) => {
+  const { sleepHours, activityLevel, mood } = req.body || {};
+
+  if (Number(sleepHours) < 0 || Number(sleepHours) > 24) {
+    return res.status(400).json({ message: 'sleepHours must be a number between 0 and 24.' });
+  }
+
+  if (!activityLevel || !mood) {
+    return res.status(400).json({ message: 'activityLevel and mood are required.' });
+  }
+
+  const smartPayload = {
+    ...mapSmartCheckInInput({ sleepHours, activityLevel, mood }),
+    userId: req.userId,
+  };
+
+  const scores = await calculateCheckInScores({
+    sleepHours: smartPayload.sleepHours,
+    activityLevel: smartPayload.activityLevel,
+    mood: smartPayload.mood,
+    activityMinutes: smartPayload.activityMinutes,
+    sleepQuality: smartPayload.sleepQuality,
+    perceivedEnergy: smartPayload.perceivedEnergy,
+    perceivedFocus: smartPayload.perceivedFocus,
+  });
+
+  const checkIn = await CheckIn.create({
+    userId: req.userId,
+    sleepHours: smartPayload.sleepHours,
+    sleepQuality: smartPayload.sleepQuality,
+    activityMinutes: smartPayload.activityMinutes,
+    perceivedEnergy: smartPayload.perceivedEnergy,
+    perceivedFocus: smartPayload.perceivedFocus,
+    ...scores,
+  });
+
+  return res.status(201).json({
+    message: 'Check-in analyzed successfully.',
+    checkIn,
+    energyScore: scores.energyScore,
+    attentionScore: scores.attentionScore,
+  });
+});
+
 const getLatestCheckIn = asyncHandler(async (req, res) => {
   const checkIn = await CheckIn.findOne({ userId: req.userId }).sort({ createdAt: -1 }).lean();
 
@@ -67,4 +130,4 @@ const getLatestCheckIn = asyncHandler(async (req, res) => {
   return res.status(200).json(checkIn);
 });
 
-module.exports = { createCheckIn, getLatestCheckIn };
+module.exports = { createCheckIn, createSmartCheckIn, getLatestCheckIn };

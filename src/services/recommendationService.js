@@ -78,6 +78,71 @@ function buildExplanation(task, energyFit, attentionFit, priorityFit, urgencyFit
   return parts.join(' ');
 }
 
+async function getGeminiTaskRecommendation({ energyScore, attentionScore, availableMinutes, tasks }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !tasks.length) {
+    return null;
+  }
+
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const taskSummary = tasks
+    .map((task) => ({
+      id: task._id.toString(),
+      title: task.title,
+      estimatedMinutes: task.estimatedMinutes,
+      requiredEnergy: task.requiredEnergy,
+      requiredAttention: task.requiredAttention,
+      priority: task.priority,
+      deadline: task.deadline || null,
+    }))
+    .slice(0, 10);
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `Return JSON only with this exact schema: {"recommendedTaskId": "string", "reason": "string"}. You are helping a user choose the best task to do right now. Use this current state: energyScore=${energyScore}, attentionScore=${attentionScore}, availableMinutes=${availableMinutes}. Consider time limit, deadline urgency, and whether the task matches the user's energy and attention. Pick the single best task from this list: ${JSON.stringify(taskSummary)}.`,
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0,
+            responseMimeType: 'application/json',
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Gemini task recommendation failed: ${await response.text()}`);
+    }
+
+    const data = await response.json();
+    const responseText = data?.candidates?.[0]?.content?.parts?.map((part) => part.text).join('') || '{}';
+    const parsed = JSON.parse(responseText);
+
+    if (!parsed?.recommendedTaskId) {
+      return null;
+    }
+
+    return parsed.recommendedTaskId;
+  } catch (error) {
+    console.warn('Gemini task recommendation failed, using local recommendation ranking.', error.message);
+    return null;
+  }
+}
+
 async function getRecommendationsForUser({ userId, availableMinutes }) {
   const latestCheckIn = await CheckIn.findOne({ userId }).sort({ createdAt: -1 }).lean();
 
@@ -121,10 +186,29 @@ async function getRecommendationsForUser({ userId, availableMinutes }) {
     })
     .sort((a, b) => b.score - a.score);
 
+  const recommendedId = await getGeminiTaskRecommendation({
+    energyScore: latestCheckIn.energyScore || 0,
+    attentionScore: latestCheckIn.attentionScore || 0,
+    availableMinutes,
+    tasks: pendingTasks,
+  });
+
+  const bestTask =
+    (recommendedId && rankedTasks.find((item) => item.task.id === recommendedId)) ||
+    rankedTasks[0] ||
+    null;
+
   return {
     energyScore: latestCheckIn.energyScore,
     attentionScore: latestCheckIn.attentionScore,
     availableMinutes,
+    recommendedTask: bestTask
+      ? {
+          ...bestTask.task,
+          score: bestTask.score,
+          explanation: bestTask.explanation,
+        }
+      : null,
     recommendations: rankedTasks,
   };
 }

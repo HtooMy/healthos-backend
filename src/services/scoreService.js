@@ -2,54 +2,39 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
 }
 
-function calculateEnergyScore({ sleepHours, sleepQuality, activityMinutes, perceivedEnergy }) {
-  const sleepComponent = (Number(sleepHours) / 24) * 40;
-  const qualityComponent = (Number(sleepQuality) / 5) * 25;
-  const selfReportedComponent = (Number(perceivedEnergy) / 5) * 20;
-  const activity = Number(activityMinutes) || 0;
+function normalizeActivityLevel(activityLevel) {
+  const normalized = String(activityLevel || '').trim().toLowerCase();
+  const values = {
+    low: 30,
+    moderate: 60,
+    medium: 60,
+    high: 120,
+    'very high': 180,
+    'very-high': 180,
+    'veryhigh': 180,
+  };
 
-  let activityComponent = 0;
-  if (activity <= 30) {
-    activityComponent = 10;
-  } else if (activity <= 90) {
-    activityComponent = 15;
-  } else if (activity <= 180) {
-    activityComponent = 12;
-  } else if (activity <= 300) {
-    activityComponent = 5;
-  } else {
-    activityComponent = -10;
-  }
-
-  if (Number(sleepHours) < 6) {
-    activityComponent -= 4;
-  }
-
-  return clampScore(sleepComponent + qualityComponent + selfReportedComponent + activityComponent);
+  return values[normalized] ?? 60;
 }
 
-function calculateAttentionScore({ sleepHours, sleepQuality, activityMinutes, perceivedFocus }) {
-  const sleepComponent = (Number(sleepHours) / 24) * 30;
-  const qualityComponent = (Number(sleepQuality) / 5) * 25;
-  const focusComponent = (Number(perceivedFocus) / 5) * 25;
-  const activity = Number(activityMinutes) || 0;
+function normalizeMoodScore(mood) {
+  const value = String(mood || 'neutral').trim().toLowerCase();
+  const mapping = {
+    excited: 5,
+    happy: 4,
+    good: 4,
+    calm: 4,
+    neutral: 3,
+    tired: 2,
+    stressed: 2,
+    anxious: 2,
+    sad: 1,
+    low: 1,
+    angry: 1,
+    exhausted: 1,
+  };
 
-  let activityComponent = 0;
-  if (activity <= 60) {
-    activityComponent = 10;
-  } else if (activity <= 150) {
-    activityComponent = 12;
-  } else if (activity <= 260) {
-    activityComponent = 8;
-  } else {
-    activityComponent = -8;
-  }
-
-  if (Number(sleepHours) >= 7) {
-    activityComponent += 5;
-  }
-
-  return clampScore(sleepComponent + qualityComponent + focusComponent + activityComponent);
+  return mapping[value] ?? 3;
 }
 
 async function getGeminiScores(payload) {
@@ -65,7 +50,7 @@ async function getGeminiScores(payload) {
         role: 'user',
         parts: [
           {
-            text: `Return JSON only with this exact schema: {"energyScore": number, "attentionScore": number}. Score both values from 0 to 100. Use only this daily wellness data: sleepHours=${payload.sleepHours}, sleepQuality=${payload.sleepQuality}, activityMinutes=${payload.activityMinutes}, perceivedEnergy=${payload.perceivedEnergy}, perceivedFocus=${payload.perceivedFocus}.`,
+            text: `Return JSON only with this exact schema: {"energyScore": number, "attentionScore": number}. Use this user data only: sleepHours=${payload.sleepHours}, activityLevel=${payload.activityLevel || 'moderate'}, mood=${payload.mood || 'neutral'}. Do not do any local calculations. Simply score the user's likely energy and attention for the day from 0 to 100.`,
           },
         ],
       },
@@ -98,29 +83,26 @@ async function getGeminiScores(payload) {
     const parsed = JSON.parse(responseText);
 
     return {
-      energyScore: clampScore(parsed.energyScore),
-      attentionScore: clampScore(parsed.attentionScore),
+      energyScore: clampScore(parsed.energyScore ?? parsed.energy ?? 0),
+      attentionScore: clampScore(parsed.attentionScore ?? parsed.attention ?? 0),
     };
   } catch (error) {
-    console.warn('Gemini scoring failed, falling back to local heuristic score.', error.message);
+    console.warn('Gemini scoring failed.', error.message);
     return null;
   }
 }
 
 async function calculateCheckInScores(payload) {
   const geminiScores = await getGeminiScores(payload);
-  if (geminiScores) {
-    return geminiScores;
+  if (!geminiScores) {
+    throw new Error('Gemini API is not configured or failed to return energy and attention scores.');
   }
 
-  return {
-    energyScore: calculateEnergyScore(payload),
-    attentionScore: calculateAttentionScore(payload),
-  };
+  return geminiScores;
 }
 
 module.exports = {
-  calculateEnergyScore,
-  calculateAttentionScore,
   calculateCheckInScores,
+  normalizeActivityLevel,
+  normalizeMoodScore,
 };
