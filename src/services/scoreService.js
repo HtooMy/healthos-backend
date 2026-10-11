@@ -43,7 +43,9 @@ async function getGeminiScores(payload) {
     return null;
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const rawModel = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const model = rawModel.startsWith('models/') ? rawModel.replace('models/', '') : rawModel;
+  const normalizedModel = model === 'gemini-2.0-flash' ? 'gemini-3.8-flash' : model;
   const requestBody = {
     contents: [
       {
@@ -63,7 +65,7 @@ async function getGeminiScores(payload) {
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${normalizedModel}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: {
