@@ -9,6 +9,6 @@ router.get('/', getCheckInHistory);
 router.post('/', createCheckIn);
 router.post('/smart', createSmartCheckIn);
 router.get('/latest', getLatestCheckIn);
-router.get('/history', istory);
+router.get('/history', getCheckInHistory);
 
 module.exports = router;
