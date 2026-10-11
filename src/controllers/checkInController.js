@@ -1,4 +1,5 @@
 const CheckIn = require('../models/CheckIn');
+const { getCheckInHistory: getCheckInHistoryService } = require('../services/checkInHistoryService');
 const { calculateCheckInScores, normalizeActivityLevel, normalizeMoodScore } = require('../services/scoreService');
 
 const asyncHandler = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -157,4 +158,23 @@ const getLatestCheckIn = asyncHandler(async (req, res) => {
   return res.status(200).json(checkIn);
 });
 
-module.exports = { createCheckIn, createSmartCheckIn, getLatestCheckIn };
+const getCheckInHistory = asyncHandler(async (req, res) => {
+  const startDate = req.query.startDate || req.query.from || null;
+  const endDate = req.query.endDate || req.query.to || null;
+  const limit = Math.max(1, Number(req.query.limit || 30));
+
+  const history = await getCheckInHistoryService({
+    userId: req.userId,
+    startDate,
+    endDate,
+    limit,
+  });
+
+  return res.status(200).json({
+    total: history.length,
+    data: history,
+    filter: { startDate, endDate, limit },
+  });
+});
+
+module.exports = { createCheckIn, createSmartCheckIn, getLatestCheckIn, getCheckInHistory };
