@@ -78,74 +78,132 @@ const createCheckIn = asyncHandler(async (req, res) => {
 });
 
 const createSmartCheckIn = asyncHandler(async (req, res) => {
-  const payload = req.body || {};
-  const sleepHours = payload.sleepHours ?? payload.hoursSlept;
-  const activityLevel = payload.activityLevel || payload.activity || 'moderate';
-  const mood = payload.mood || payload.energyMood || 'neutral';
-  const sleepQuality = payload.sleepQuality ?? payload.sleepQualityRating ?? 3;
-  const perceivedEnergy = payload.perceivedEnergy ?? payload.currentEnergy ?? 3;
-  const perceivedFocus = payload.perceivedFocus ?? payload.currentFocus ?? 3;
+  const body = req.body || {};
 
-  if (Number(sleepHours) < 0 || Number(sleepHours) > 24) {
-    return res.status(400).json({ message: 'sleepHours must be a number between 0 and 24.' });
+  if (!req.userId) {
+    return res.status(401).json({
+      message: 'Authentication required.',
+    });
   }
 
-  if (!activityLevel) {
-    return res.status(400).json({ message: 'activityLevel is required.' });
+  if (
+    Object.prototype.hasOwnProperty.call(body, 'energyScore') ||
+    Object.prototype.hasOwnProperty.call(body, 'attentionScore')
+  ) {
+    return res.status(400).json({
+      message: 'Scores are calculated on the server.',
+    });
   }
 
-  const smartPayload = {
+  const rawSleepHours = body.sleepHours ?? body.hoursSlept;
+
+  if (
+    rawSleepHours === undefined ||
+    rawSleepHours === null ||
+    (typeof rawSleepHours !== 'number' &&
+      typeof rawSleepHours !== 'string') ||
+    String(rawSleepHours).trim() === '' ||
+    !Number.isFinite(Number(rawSleepHours)) ||
+    Number(rawSleepHours) < 0 ||
+    Number(rawSleepHours) > 24
+  ) {
+    return res.status(400).json({
+      message: 'sleepHours must be a number between 0 and 24.',
+    });
+  }
+
+  const activityLevel = String(
+    body.activityLevel ?? body.activity ?? 'moderate'
+  ).trim().toLowerCase();
+
+  const allowedActivityLevels = [
+    'low',
+    'moderate',
+    'medium',
+    'high',
+    'very high',
+    'very-high',
+    'veryhigh',
+  ];
+
+  if (!allowedActivityLevels.includes(activityLevel)) {
+    return res.status(400).json({
+      message: 'Invalid activityLevel.',
+    });
+  }
+
+  const payload = {
     userId: req.userId,
-    sleepHours: Number(sleepHours),
-    sleepQuality: Number(sleepQuality),
+    sleepHours: Number(rawSleepHours),
+    sleepQuality: Number(
+      body.sleepQuality ?? body.sleepQualityRating ?? 3
+    ),
     activityMinutes: normalizeActivityLevel(activityLevel),
-    perceivedEnergy: Number(perceivedEnergy),
-    perceivedFocus: Number(perceivedFocus),
+    perceivedEnergy: Number(
+      body.perceivedEnergy ?? body.currentEnergy ?? 3
+    ),
+    perceivedFocus: Number(
+      body.perceivedFocus ?? body.currentFocus ?? 3
+    ),
     activityLevel,
-    mood,
+    mood: String(
+      body.mood ?? body.energyMood ?? 'neutral'
+    ).trim().toLowerCase(),
   };
 
-  const validationError = validateCheckInInput({
-    sleepHours: smartPayload.sleepHours,
-    sleepQuality: smartPayload.sleepQuality,
-    activityMinutes: smartPayload.activityMinutes,
-    perceivedEnergy: smartPayload.perceivedEnergy,
-    perceivedFocus: smartPayload.perceivedFocus,
-  });
+  const validationError = validateCheckInInput(payload);
 
   if (validationError) {
-    return res.status(400).json({ message: validationError });
+    return res.status(400).json({
+      message: validationError,
+    });
   }
 
-  const scores = await calculateCheckInScores({
-    sleepHours: smartPayload.sleepHours,
-    activityLevel: smartPayload.activityLevel,
-    mood: smartPayload.mood,
-    activityMinutes: smartPayload.activityMinutes,
-    sleepQuality: smartPayload.sleepQuality,
-    perceivedEnergy: smartPayload.perceivedEnergy,
-    perceivedFocus: smartPayload.perceivedFocus,
-  });
+  let stage = 'scoring';
 
-  const checkIn = await CheckIn.create({
-    userId: req.userId,
-    sleepHours: smartPayload.sleepHours,
-    sleepQuality: smartPayload.sleepQuality,
-    activityMinutes: smartPayload.activityMinutes,
-    perceivedEnergy: smartPayload.perceivedEnergy,
-    perceivedFocus: smartPayload.perceivedFocus,
-    ...scores,
-  });
+  try {
+    const scores = await calculateCheckInScores(payload);
 
-  return res.status(201).json({
-    message: 'Based on your latest check-in.',
-    checkIn,
-    estimatedEnergy: scores.energyScore,
-    estimatedFocus: scores.attentionScore,
-    energyScore: scores.energyScore,
-    attentionScore: scores.attentionScore,
-    label: 'Based on your latest check-in.',
-  });
+    if (
+      !scores ||
+      !Number.isFinite(scores.energyScore) ||
+      !Number.isFinite(scores.attentionScore) ||
+      scores.energyScore < 0 ||
+      scores.energyScore > 100 ||
+      scores.attentionScore < 0 ||
+      scores.attentionScore > 100
+    ) {
+      throw new Error('Scoring service returned invalid scores.');
+    }
+
+    stage = 'database save';
+
+    // Save only the fields used by your existing CheckIn model.
+    const checkIn = await CheckIn.create({
+      userId: payload.userId,
+      sleepHours: payload.sleepHours,
+      sleepQuality: payload.sleepQuality,
+      activityMinutes: payload.activityMinutes,
+      perceivedEnergy: payload.perceivedEnergy,
+      perceivedFocus: payload.perceivedFocus,
+      energyScore: scores.energyScore,
+      attentionScore: scores.attentionScore,
+    });
+
+    return res.status(201).json({
+      message: 'Check-in saved successfully.',
+      checkIn,
+      estimatedEnergy: scores.energyScore,
+      estimatedFocus: scores.attentionScore,
+      energyScore: scores.energyScore,
+      attentionScore: scores.attentionScore,
+      source: scores.source || 'unknown',
+      label: 'Based on your latest check-in.',
+    });
+  } catch (error) {
+    console.error(`Smart check-in failed during ${stage}:`, error);
+    throw error;
+  }
 });
 
 const getLatestCheckIn = asyncHandler(async (req, res) => {
